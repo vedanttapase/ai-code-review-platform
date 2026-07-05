@@ -116,5 +116,22 @@ export default async function LandingPage() {
         CodeSentry — AI Code Review Platform
       </footer>
     </main>
+    import ReviewHero3D from "@/components/review/review-hero-3d"
+import DashboardCharts from "@/components/dashboard/dashboard-charts" //[cite: 1]
+
+export default function Page() {
+  return (
+    <main className="min-h-screen bg-[#060709] p-6 space-y-8">
+      {/* High-End 3D Visual Entry */}
+      <ReviewHero3D />
+
+      {/* Rest of Dashboard Contents beneath */}
+      <div className="max-w-7xl mx-auto px-4">
+        <h2 className="text-xl font-bold text-zinc-400 mb-6">System Health Analytics</h2>
+        <DashboardCharts /> {/*[cite: 1] */}
+      </div>
+    </main>
+  )
+}
   )
 }
