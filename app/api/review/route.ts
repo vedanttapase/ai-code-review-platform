@@ -103,7 +103,7 @@ IMPORTANT: Respond ONLY with a valid JSON object matching this exact structure â
         'X-Title': 'CodeSentry',
       },
       body: JSON.stringify({
-        model: 'model: "google/gemini-2.5-flash"',
+        model: 'model: google/gemini-2.5-flash',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: code },
