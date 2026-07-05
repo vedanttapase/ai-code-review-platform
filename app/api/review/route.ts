@@ -113,11 +113,17 @@ IMPORTANT: Respond ONLY with a valid JSON object matching this exact structure â
       }),
     })
 
-    if (!openrouterRes.ok) {
-      const errText = await openrouterRes.text()
-      console.error('[review] OpenRouter error:', errText)
-      return Response.json({ error: 'AI service error. Please try again.' }, { status: 502 })
-    }
+ if (!openrouterRes.ok) {
+  const errText = await openrouterRes.text()
+  console.error('[review] OpenRouter error:', errText)
+
+  return Response.json(
+    {
+      error: errText,
+    },
+    { status: openrouterRes.status },
+  )
+}
 
     const openrouterData = await openrouterRes.json()
     const raw = openrouterData.choices[0].message.content.trim()
