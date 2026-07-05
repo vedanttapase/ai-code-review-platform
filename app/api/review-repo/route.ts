@@ -1,5 +1,6 @@
 import { generateText, Output } from 'ai'
 import { z } from 'zod'
+import { getReviewModel } from '@/lib/ai'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -138,7 +139,7 @@ export async function POST(req: Request) {
       .join('\n\n')
 
     const { output } = await generateText({
-      model: 'openai/gpt-5-mini',
+      model: getReviewModel(),
       output: Output.object({ schema: repoSchema }),
       system: `You are CodeSentry, an expert repository auditor. Analyze the provided source files from the GitHub repository "${owner}/${repo}" and produce a structured health assessment. For each file, give a quality score, issue count, a brief summary, and up to 3 top issues with line numbers. Then give an overall health score, summary, strengths, and concerns for the whole repository. Be precise and technical; never invent issues.`,
       prompt: filesPrompt,
@@ -176,8 +177,14 @@ export async function POST(req: Request) {
       return Response.json(
         {
           error:
-            'AI Gateway needs activation: add a credit card to your Vercel team (Settings → AI) to unlock free AI credits, then try again.',
+            'No AI provider configured. Add an OPENROUTER_API_KEY environment variable (free at openrouter.ai) or activate the Vercel AI Gateway.',
         },
+        { status: 402 },
+      )
+    }
+    if (message.includes('401') || message.toLowerCase().includes('unauthorized')) {
+      return Response.json(
+        { error: 'AI provider rejected the API key. Check that OPENROUTER_API_KEY is valid.' },
         { status: 402 },
       )
     }

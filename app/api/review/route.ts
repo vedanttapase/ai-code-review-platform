@@ -1,5 +1,6 @@
 import { generateText, Output } from 'ai'
 import { z } from 'zod'
+import { getReviewModel } from '@/lib/ai'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
@@ -88,7 +89,7 @@ export async function POST(req: Request) {
 
   try {
     const { output } = await generateText({
-      model: 'openai/gpt-5-mini',
+      model: getReviewModel(),
       output: Output.object({ schema: reviewSchema }),
       system: `You are CodeSentry, an expert senior code reviewer combining the perspectives of a security auditor, a performance engineer, and a readability-focused maintainer.
 
@@ -133,8 +134,14 @@ Line numbers are 1-based and must reference the exact input lines. Be precise, t
       return Response.json(
         {
           error:
-            'AI Gateway needs activation: add a credit card to your Vercel team (Settings → AI) to unlock free AI credits, then try again.',
+            'No AI provider configured. Add an OPENROUTER_API_KEY environment variable (free at openrouter.ai) or activate the Vercel AI Gateway.',
         },
+        { status: 402 },
+      )
+    }
+    if (message.includes('401') || message.toLowerCase().includes('unauthorized')) {
+      return Response.json(
+        { error: 'AI provider rejected the API key. Check that OPENROUTER_API_KEY is valid.' },
         { status: 402 },
       )
     }
