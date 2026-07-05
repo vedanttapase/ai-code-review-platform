@@ -1,5 +1,3 @@
-import { createOpenRouter } from '@openrouter/ai-sdk-provider'
-import { generateText, Output } from 'ai'
 import { z } from 'zod'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
@@ -8,59 +6,39 @@ import { reviews } from '@/lib/db/schema'
 
 export const maxDuration = 120
 
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-})
-
 const reviewSchema = z.object({
-  isCode: z
-    .boolean()
-    .describe(
-      'true only if the input is actual source code in a programming language. false for prose, questions, or non-code content.',
-    ),
-  rejectionReason: z
-    .string()
-    .optional()
-    .describe('If isCode is false, a short polite explanation that only programming code is accepted.'),
-  summary: z.string().describe('2-3 sentence overview of what the code does and its overall quality.'),
-  score: z.number().min(0).max(100).describe('Overall code quality score 0-100.'),
+  isCode: z.boolean(),
+  rejectionReason: z.string().optional(),
+  summary: z.string(),
+  score: z.number().min(0).max(100),
   complexity: z.object({
-    time: z.string().describe('Big-O time complexity of the dominant logic, e.g. O(n log n). Use O(1) if trivial.'),
-    space: z.string().describe('Big-O space complexity.'),
-    cyclomatic: z.number().describe('Estimated cyclomatic complexity of the most complex function.'),
+    time: z.string(),
+    space: z.string(),
+    cyclomatic: z.number(),
     maintainability: z.enum(['excellent', 'good', 'fair', 'poor']),
   }),
-  issues: z
-    .array(
-      z.object({
-        line: z.number().describe('1-based line number where the issue starts.'),
-        endLine: z.number().optional(),
-        severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
-        category: z
-          .string()
-          .describe('One of: Bug, Security, Performance, Style, Maintainability, Best Practice'),
-        title: z.string().describe('Short issue title, under 10 words.'),
-        description: z.string().describe('Clear explanation of the problem and why it matters.'),
-        suggestion: z.string().describe('Concrete suggestion, include a corrected code snippet when helpful.'),
-      }),
-    )
-    .describe('All detected issues. Empty array if the code is clean.'),
-  explanations: z
-    .array(
-      z.object({
-        startLine: z.number(),
-        endLine: z.number(),
-        title: z.string().describe('Short label for this block of code.'),
-        explanation: z.string().describe('Plain-English explanation of what this block does.'),
-      }),
-    )
-    .describe('Section-by-section walkthrough of the code. Only required for explain mode; empty otherwise.'),
-  fixedCode: z
-    .string()
-    .optional()
-    .describe('Only for fix mode: the complete corrected version of the code with all issues fixed.'),
-  fixSummary: z.string().optional().describe('Only for fix mode: bullet-style summary of what was changed.'),
-  strengths: z.array(z.string()).describe('2-4 things the code does well.'),
+  issues: z.array(
+    z.object({
+      line: z.number(),
+      endLine: z.number().optional(),
+      severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
+      category: z.string(),
+      title: z.string(),
+      description: z.string(),
+      suggestion: z.string(),
+    }),
+  ),
+  explanations: z.array(
+    z.object({
+      startLine: z.number(),
+      endLine: z.number(),
+      title: z.string(),
+      explanation: z.string(),
+    }),
+  ),
+  fixedCode: z.string().optional(),
+  fixSummary: z.string().optional(),
+  strengths: z.array(z.string()),
 })
 
 const MODE_INSTRUCTIONS: Record<string, string> = {
@@ -91,11 +69,7 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Code too large (max 100KB)' }, { status: 400 })
   }
 
-  try {
-    const { output } = await generateText({
-      model: openrouter('google/gemini-2.0-flash-001'),
-      output: Output.object({ schema: reviewSchema }),
-      system: `You are CodeSentry, an expert senior code reviewer combining the perspectives of a security auditor, a performance engineer, and a readability-focused maintainer.
+  const systemPrompt = `You are CodeSentry, an expert senior code reviewer combining the perspectives of a security auditor, a performance engineer, and a readability-focused maintainer.
 
 STRICT SCOPE GUARD: You ONLY review programming source code. If the input is not code (e.g. an essay, a question, random text, cooking recipes), set isCode=false, set rejectionReason to a brief polite message that this tool only reviews programming code, set score=0, and leave all arrays empty.
 
@@ -103,13 +77,54 @@ The user claims the code is written in: ${language}. If it is clearly a differen
 
 ${MODE_INSTRUCTIONS[mode]}
 
-Line numbers are 1-based and must reference the exact input lines. Be precise, technical, and constructive. Never invent issues.`,
-      prompt: code,
+Line numbers are 1-based and must reference the exact input lines. Be precise, technical, and constructive. Never invent issues.
+
+IMPORTANT: Respond ONLY with a valid JSON object matching this exact structure — no markdown, no backticks, no extra text:
+{
+  "isCode": boolean,
+  "rejectionReason": string or omit,
+  "summary": string,
+  "score": number 0-100,
+  "complexity": { "time": string, "space": string, "cyclomatic": number, "maintainability": "excellent"|"good"|"fair"|"poor" },
+  "issues": [{ "line": number, "endLine": number or omit, "severity": "critical"|"high"|"medium"|"low"|"info", "category": string, "title": string, "description": string, "suggestion": string }],
+  "explanations": [{ "startLine": number, "endLine": number, "title": string, "explanation": string }],
+  "fixedCode": string or omit,
+  "fixSummary": string or omit,
+  "strengths": [string]
+}`
+
+  try {
+    const openrouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://ai-code-review-platform.vercel.app',
+        'X-Title': 'CodeSentry',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.0-flash-001',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: code },
+        ],
+        max_tokens: 4000,
+        temperature: 0.2,
+      }),
     })
 
-    const result = output
+    if (!openrouterRes.ok) {
+      const errText = await openrouterRes.text()
+      console.error('[review] OpenRouter error:', errText)
+      return Response.json({ error: 'AI service error. Please try again.' }, { status: 502 })
+    }
 
-    // Persist to history
+    const openrouterData = await openrouterRes.json()
+    const raw = openrouterData.choices[0].message.content.trim()
+    const clean = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
+    const parsed = JSON.parse(clean)
+    const result = reviewSchema.parse(parsed)
+
     const criticalCount = result.issues.filter(
       (i) => i.severity === 'critical' || i.severity === 'high',
     ).length
