@@ -4,69 +4,42 @@ import { z } from 'zod'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { reviews } from '@/lib/db/schema'
+import { repoReviews } from '@/lib/db/schema'
+import { detectLanguageFromFilename } from '@/lib/languages'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
 })
 
-const reviewSchema = z.object({
-  isCode: z
-    .boolean()
-    .describe(
-      'true only if the input is actual source code in a programming language. false for prose, questions, or non-code content.',
-    ),
-  rejectionReason: z
-    .string()
-    .optional()
-    .describe('If isCode is false, a short polite explanation that only programming code is accepted.'),
-  summary: z.string().describe('2-3 sentence overview of what the code does and its overall quality.'),
-  score: z.number().min(0).max(100).describe('Overall code quality score 0-100.'),
-  complexity: z.object({
-    time: z.string().describe('Big-O time complexity of the dominant logic, e.g. O(n log n). Use O(1) if trivial.'),
-    space: z.string().describe('Big-O space complexity.'),
-    cyclomatic: z.number().describe('Estimated cyclomatic complexity of the most complex function.'),
-    maintainability: z.enum(['excellent', 'good', 'fair', 'poor']),
-  }),
-  issues: z
-    .array(
-      z.object({
-        line: z.number().describe('1-based line number where the issue starts.'),
-        endLine: z.number().optional(),
-        severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
-        category: z
-          .string()
-          .describe('One of: Bug, Security, Performance, Style, Maintainability, Best Practice'),
-        title: z.string().describe('Short issue title, under 10 words.'),
-        description: z.string().describe('Clear explanation of the problem and why it matters.'),
-        suggestion: z.string().describe('Concrete suggestion, include a corrected code snippet when helpful.'),
-      }),
-    )
-    .describe('All detected issues. Empty array if the code is clean.'),
-  explanations: z
-    .array(
-      z.object({
-        startLine: z.number(),
-        endLine: z.number(),
-        title: z.string().describe('Short label for this block of code.'),
-        explanation: z.string().describe('Plain-English explanation of what this block does.'),
-      }),
-    )
-    .describe('Section-by-section walkthrough of the code. Only required for explain mode; empty otherwise.'),
-  fixedCode: z
-    .string()
-    .optional()
-    .describe('Only for fix mode: the complete corrected version of the code with all issues fixed.'),
-  fixSummary: z.string().optional().describe('Only for fix mode: bullet-style summary of what was changed.'),
-  strengths: z.array(z.string()).describe('2-4 things the code does well.'),
+const repoSchema = z.object({
+  healthScore: z.number().min(0).max(100).describe('Overall repository health score 0-100.'),
+  overallSummary: z.string().describe('3-4 sentence assessment of the codebase quality and architecture.'),
+  strengths: z.array(z.string()).describe('3-5 things the repository does well.'),
+  concerns: z.array(z.string()).describe('3-5 most important concerns or risks.'),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      language: z.string(),
+      score: z.number().min(0).max(100),
+      issueCount: z.number(),
+      summary: z.string().describe('1-2 sentence assessment of this file.'),
+      topIssues: z.array(
+        z.object({
+          severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
+          title: z.string(),
+          line: z.number(),
+        }),
+      ),
+    }),
+  ),
 })
 
-const MODE_INSTRUCTIONS: Record<string, string> = {
-  detect: `Focus on DETECTING issues: bugs, security vulnerabilities (injection, XSS, secrets, unsafe deserialization, race conditions), performance problems, and code smells. Populate the issues array thoroughly. Leave explanations empty and do not produce fixedCode.`,
-  explain: `Focus on EXPLAINING the code: produce a thorough section-by-section walkthrough in the explanations array so a junior developer can understand every part. Still list any critical/high issues you notice, but keep the issue list focused. Do not produce fixedCode.`,
-  fix: `Focus on FIXING the code: detect all issues, then produce fixedCode containing the COMPLETE corrected source (not a fragment) and fixSummary describing each change. Preserve the original behavior and style where possible.`,
+function parseRepoUrl(url: string): { owner: string; repo: string } | null {
+  const match = url.match(/github\.com\/([^/\s]+)\/([^/\s#?]+)/i)
+  if (!match) return null
+  return { owner: match[1], repo: match[2].replace(/\.git$/, '') }
 }
 
 export async function POST(req: Request) {
@@ -75,64 +48,134 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const body = await req.json()
-  const { code, language, mode, title, sourceType } = body as {
-    code: string
-    language: string
-    mode: 'detect' | 'explain' | 'fix'
-    title?: string
-    sourceType?: string
+  const { repoUrl } = (await req.json()) as { repoUrl: string }
+  const parsed = parseRepoUrl(repoUrl || '')
+  if (!parsed) {
+    return Response.json({ error: 'Invalid GitHub URL. Use format: https://github.com/owner/repo' }, { status: 400 })
   }
 
-  if (!code?.trim() || !language || !mode || !MODE_INSTRUCTIONS[mode]) {
-    return Response.json({ error: 'Missing code, language, or mode' }, { status: 400 })
-  }
-  if (code.length > 100_000) {
-    return Response.json({ error: 'Code too large (max 100KB)' }, { status: 400 })
-  }
+  const { owner, repo } = parsed
+  const ghHeaders: HeadersInit = { Accept: 'application/vnd.github+json', 'User-Agent': 'CodeSentry' }
 
   try {
+    // Fetch repo metadata
+    const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: ghHeaders })
+    if (repoRes.status === 404) {
+      return Response.json({ error: 'Repository not found. Make sure it is public.' }, { status: 404 })
+    }
+    if (repoRes.status === 403) {
+      return Response.json({ error: 'GitHub rate limit reached. Try again in a few minutes.' }, { status: 429 })
+    }
+    if (!repoRes.ok) {
+      return Response.json({ error: 'Failed to fetch repository.' }, { status: 502 })
+    }
+    const repoMeta = await repoRes.json()
+    const defaultBranch = repoMeta.default_branch || 'main'
+
+    // Fetch file tree
+    const treeRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`,
+      { headers: ghHeaders },
+    )
+    if (!treeRes.ok) {
+      return Response.json({ error: 'Failed to fetch repository file tree.' }, { status: 502 })
+    }
+    const tree = await treeRes.json()
+
+    const codeFiles = (tree.tree as { path: string; type: string; size?: number }[])
+      .filter(
+        (f) =>
+          f.type === 'blob' &&
+          detectLanguageFromFilename(f.path) &&
+          !f.path.includes('node_modules/') &&
+          !f.path.includes('vendor/') &&
+          !f.path.includes('.min.') &&
+          !f.path.includes('dist/') &&
+          !f.path.includes('build/') &&
+          (f.size ?? 0) > 100 &&
+          (f.size ?? 0) < 40_000,
+      )
+      .sort((a, b) => (b.size ?? 0) - (a.size ?? 0))
+
+    if (codeFiles.length === 0) {
+      return Response.json({ error: 'No reviewable source files found in this repository.' }, { status: 400 })
+    }
+
+    // Language breakdown across all code files
+    const langCounts = new Map<string, number>()
+    for (const f of codeFiles) {
+      const lang = detectLanguageFromFilename(f.path)!.label
+      langCounts.set(lang, (langCounts.get(lang) || 0) + 1)
+    }
+    const languageBreakdown = Array.from(langCounts.entries())
+      .map(([language, count]) => ({
+        language,
+        percentage: Math.round((count / codeFiles.length) * 100),
+      }))
+      .sort((a, b) => b.percentage - a.percentage)
+      .slice(0, 6)
+
+    // Pick up to 8 most substantial files and fetch their contents
+    const selected = codeFiles.slice(0, 8)
+    const contents = await Promise.all(
+      selected.map(async (f) => {
+        const res = await fetch(
+          `https://raw.githubusercontent.com/${owner}/${repo}/${defaultBranch}/${f.path}`,
+          { headers: { 'User-Agent': 'CodeSentry' } },
+        )
+        if (!res.ok) return null
+        const text = await res.text()
+        return {
+          path: f.path,
+          language: detectLanguageFromFilename(f.path)!.label,
+          content: text.slice(0, 12_000),
+        }
+      }),
+    )
+    const fileContents = contents.filter(Boolean) as { path: string; language: string; content: string }[]
+
+    if (fileContents.length === 0) {
+      return Response.json({ error: 'Could not download any source files from the repository.' }, { status: 502 })
+    }
+
+    const filesPrompt = fileContents
+      .map((f) => `=== FILE: ${f.path} (${f.language}) ===\n${f.content}`)
+      .join('\n\n')
+
     const { output } = await generateText({
       model: openrouter('google/gemini-2.0-flash-001'),
-      output: Output.object({ schema: reviewSchema }),
-      system: `You are CodeSentry, an expert senior code reviewer combining the perspectives of a security auditor, a performance engineer, and a readability-focused maintainer.
-
-STRICT SCOPE GUARD: You ONLY review programming source code. If the input is not code (e.g. an essay, a question, random text, cooking recipes), set isCode=false, set rejectionReason to a brief polite message that this tool only reviews programming code, set score=0, and leave all arrays empty.
-
-The user claims the code is written in: ${language}. If it is clearly a different programming language, still review it correctly and mention the mismatch in the summary.
-
-${MODE_INSTRUCTIONS[mode]}
-
-Line numbers are 1-based and must reference the exact input lines. Be precise, technical, and constructive. Never invent issues.`,
-      prompt: code,
+      output: Output.object({ schema: repoSchema }),
+      system: `You are CodeSentry, an expert repository auditor. Analyze the provided source files from the GitHub repository "${owner}/${repo}" and produce a structured health assessment. For each file, give a quality score, issue count, a brief summary, and up to 3 top issues with line numbers. Then give an overall health score, summary, strengths, and concerns for the whole repository. Be precise and technical; never invent issues.`,
+      prompt: filesPrompt,
     })
 
-    const result = output
-
-    // Persist to history
-    const criticalCount = result.issues.filter(
-      (i) => i.severity === 'critical' || i.severity === 'high',
-    ).length
+    const result = {
+      repoName: `${owner}/${repo}`,
+      description: repoMeta.description || '',
+      healthScore: Math.round(output.healthScore),
+      totalFiles: codeFiles.length,
+      analyzedFiles: fileContents.length,
+      languageBreakdown,
+      overallSummary: output.overallSummary,
+      strengths: output.strengths,
+      concerns: output.concerns,
+      files: output.files,
+    }
 
     const inserted = await db
-      .insert(reviews)
+      .insert(repoReviews)
       .values({
         userId: session.user.id,
-        title: title?.trim() || `${language} review`,
-        language,
-        mode,
-        sourceType: sourceType || 'paste',
-        code,
+        repoUrl,
+        repoName: `${owner}/${repo}`,
         result,
-        score: result.isCode ? Math.round(result.score) : 0,
-        issueCount: result.issues.length,
-        criticalCount,
+        healthScore: result.healthScore,
       })
-      .returning({ id: reviews.id })
+      .returning({ id: repoReviews.id })
 
     return Response.json({ result, reviewId: inserted[0]?.id })
   } catch (err) {
-    console.error('[review] Review generation failed:', err)
-    return Response.json({ error: 'Review failed. Please try again.' }, { status: 500 })
+    console.error('[review-repo] Repo review failed:', err)
+    return Response.json({ error: 'Repository analysis failed. Please try again.' }, { status: 500 })
   }
 }
