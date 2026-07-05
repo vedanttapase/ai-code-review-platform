@@ -128,6 +128,16 @@ Line numbers are 1-based and must reference the exact input lines. Be precise, t
     return Response.json({ result, reviewId: inserted[0]?.id })
   } catch (err) {
     console.error('[v0] Review generation failed:', err)
+    const message = err instanceof Error ? err.message : ''
+    if (message.includes('credit card') || message.includes('customer_verification_required')) {
+      return Response.json(
+        {
+          error:
+            'AI Gateway needs activation: add a credit card to your Vercel team (Settings → AI) to unlock free AI credits, then try again.',
+        },
+        { status: 402 },
+      )
+    }
     return Response.json({ error: 'Review failed. Please try again.' }, { status: 500 })
   }
 }

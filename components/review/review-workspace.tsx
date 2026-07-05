@@ -106,7 +106,7 @@ export function ReviewWorkspace() {
             className="w-48"
             aria-label="Review title"
           />
-          <Select value={language} onValueChange={setLanguage}>
+          <Select value={language} onValueChange={(v) => v && setLanguage(v)}>
             <SelectTrigger className="w-44" aria-label="Programming language">
               <SelectValue />
             </SelectTrigger>

@@ -28,12 +28,10 @@ export default async function LandingPage() {
           CodeSentry
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" asChild>
-            <Link href="/sign-in">Sign in</Link>
+          <Button variant="ghost" nativeButton={false} render={<Link href="/sign-in" />}>
+            Sign in
           </Button>
-          <Button asChild>
-            <Link href="/sign-up">Get started</Link>
-          </Button>
+          <Button nativeButton={false} render={<Link href="/sign-up" />}>Get started</Button>
         </div>
       </header>
 
@@ -51,14 +49,12 @@ export default async function LandingPage() {
           over time.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3">
-          <Button size="lg" asChild>
-            <Link href="/sign-up">
-              Start reviewing free
-              <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
-            </Link>
+          <Button size="lg" nativeButton={false} render={<Link href="/sign-up" />}>
+            Start reviewing free
+            <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
           </Button>
-          <Button size="lg" variant="outline" asChild>
-            <Link href="/sign-in">Sign in</Link>
+          <Button size="lg" variant="outline" nativeButton={false} render={<Link href="/sign-in" />}>
+            Sign in
           </Button>
         </div>
       </section>
