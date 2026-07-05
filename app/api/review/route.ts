@@ -1,3 +1,4 @@
+import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { generateText, Output } from 'ai'
 import { z } from 'zod'
 import { headers } from 'next/headers'
@@ -6,6 +7,10 @@ import { db } from '@/lib/db'
 import { reviews } from '@/lib/db/schema'
 
 export const maxDuration = 120
+
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+})
 
 const reviewSchema = z.object({
   isCode: z
@@ -88,7 +93,7 @@ export async function POST(req: Request) {
 
   try {
     const { output } = await generateText({
-      model: 'openai/gpt-5-mini',
+      model: openrouter('google/gemini-2.0-flash-001'),
       output: Output.object({ schema: reviewSchema }),
       system: `You are CodeSentry, an expert senior code reviewer combining the perspectives of a security auditor, a performance engineer, and a readability-focused maintainer.
 
@@ -127,17 +132,7 @@ Line numbers are 1-based and must reference the exact input lines. Be precise, t
 
     return Response.json({ result, reviewId: inserted[0]?.id })
   } catch (err) {
-    console.error('[v0] Review generation failed:', err)
-    const message = err instanceof Error ? err.message : ''
-    if (message.includes('credit card') || message.includes('customer_verification_required')) {
-      return Response.json(
-        {
-          error:
-            'AI Gateway needs activation: add a credit card to your Vercel team (Settings → AI) to unlock free AI credits, then try again.',
-        },
-        { status: 402 },
-      )
-    }
+    console.error('[review] Review generation failed:', err)
     return Response.json({ error: 'Review failed. Please try again.' }, { status: 500 })
   }
 }
