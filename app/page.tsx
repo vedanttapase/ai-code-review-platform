@@ -18,10 +18,7 @@ import {
 } from 'lucide-react'
 
 // Safely lazy-load the 3D visual graphics engine entirely client-side
-const ReviewHero3D = dynamic(
-  () => import('@/components/review/review-hero-3d'),
-  { ssr: false }
-)
+import ReviewHero3D from '@/components/review/review-hero-3d'
 
 export default async function LandingPage() {
   const session = await auth.api.getSession({ headers: await headers() })
