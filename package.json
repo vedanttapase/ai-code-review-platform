@@ -11,6 +11,7 @@
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "@monaco-editor/react": "^4.7.0",
+    "@openrouter/ai-sdk-provider": "^2.10.0",
     "@vercel/analytics": "1.6.1",
     "ai": "^7.0.15",
     "better-auth": "^1.6.23",
