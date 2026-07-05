@@ -1,5 +1,4 @@
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
 import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { auth } from '@/lib/auth'
@@ -17,7 +16,7 @@ import {
   Code2,
 } from 'lucide-react'
 
-// Safely lazy-load the 3D visual graphics engine entirely client-side
+// Native static import for the hardware-accelerated 3D element
 import ReviewHero3D from '@/components/review/review-hero-3d'
 
 export default async function LandingPage() {
@@ -25,7 +24,7 @@ export default async function LandingPage() {
   if (session?.user) redirect('/review')
 
   return (
-    <main className="min-h-svh bg-[#060709] text-foreground selection:bg-purple-500/30 selection:text-white overflow-x-hidden">
+    <main className="min-h-svh bg-[#060709] text-white selection:bg-purple-500/30 selection:text-white overflow-x-hidden">
       {/* 1. Global Navigation Header */}
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.04] bg-[#060709]/70 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
