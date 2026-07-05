@@ -152,7 +152,7 @@ IMPORTANT: Respond ONLY with a valid JSON object — no markdown, no backticks, 
         'X-Title': 'CodeSentry',
       },
       body: JSON.stringify({
-        model: 'deepseek/deepseek-chat-v3-0324:free',
+       model: 'google/gemini-2.5-flash',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: filesPrompt },
